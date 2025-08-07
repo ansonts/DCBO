@@ -9,8 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Environment variables
-DISCORD_TOKEN = "MTQwMDM0MzYxNDYyNTY4MTU0MQ.GKRmIB.vkKosqHC0krwT-UuA0JjcZNLMXIOQlSKwJqSjs"  # Replace with your Discord bot token
-DEEPSEEK_API_KEY = "sk-7a15e5c7db3a43acbd00088ae370cdf7"  # Replace with your DeepSeek API key
+
 TARGET_LANGUAGE = "en"  # Target language code (e.g., 'en' for English, 'zh' for Chinese, 'es' for Spanish)
 SOURCE_CHANNEL_ID = YOUR_CHANNEL_ID  # Replace with your Discord channel ID (integer)
 
