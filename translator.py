@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()  # Load .env file
 import discord
 from discord.ext import commands
 import requests
@@ -8,11 +10,22 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment variables
-DISCORD_TOKEN = "MTQwMDM0MzYxNDYyNTY4MTU0MQ.GKRmIB.vkKosqHC0krwT-UuA0JjcZNLMXIOQlSKwJqSjs"  # Replace with your Discord bot token
-DEEPSEEK_API_KEY = "sk-7a15e5c7db3a43acbd00088ae370cdf7"  # Replace with your DeepSeek API key
-TARGET_LANGUAGE = "en"  # Target language code (e.g., 'en' for English, 'zh' for Chinese, 'es' for Spanish)
-SOURCE_CHANNEL_ID = YOUR_CHANNEL_ID  # Replace with your Discord channel ID (integer)
+# Load environment variables
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+TARGET_LANGUAGE = os.getenv("TARGET_LANGUAGE", "en")  # Default to English
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID", "0"))  # Replace with your channel ID
+
+# Validate environment variables
+if not DISCORD_TOKEN:
+    logger.error("DISCORD_TOKEN is not set. Please configure it in environment variables.")
+    exit(1)
+if not DEEPSEEK_API_KEY:
+    logger.error("DEEPSEEK_API_KEY is not set. Please configure it in environment variables.")
+    exit(1)
+if SOURCE_CHANNEL_ID == 0:
+    logger.error("SOURCE_CHANNEL_ID is not set or invalid. Please configure it in environment variables.")
+    exit(1)
 
 # Set up Discord bot
 intents = discord.Intents.default()
@@ -27,57 +40,40 @@ def translate_text(text, target_language):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "deepseek-chat",  # Use DeepSeek-R1 or DeepSeek-V3 as needed
+        "model": "deepseek-chat",
         "messages": [
             {
                 "role": "system",
-                "content": f"You are a translator. Translate the following text to {target_language}. Provide only the translated text in the response."
+                "content": f"You are a translator. Translate the following text to {target_language}. Provide only the translated text."
             },
-            {
-                "role": "user",
-                "content": text
-            }
+            {"role": "user", "content": text}
         ],
         "temperature": 0.7
     }
-    
     try:
         response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
-        result = response.json()
-        translated_text = result['choices'][0]['message']['content'].strip()
-        return translated_text
+        return response.json()['choices'][0]['message']['content'].strip()
     except requests.exceptions.RequestException as e:
         logger.error(f"Error translating text: {e}")
         return None
 
-# Discord bot event: On ready
 @bot.event
 async def on_ready():
     logger.info(f"Bot logged in as {bot.user}")
 
-# Discord bot event: On message
 @bot.event
 async def on_message(message):
-    # Ignore messages from the bot itself or from other channels
     if message.author == bot.user or message.channel.id != SOURCE_CHANNEL_ID:
         return
-    
-    # Get the message content
     content = message.content
     if not content:
         return
-    
-    # Translate the message
     translated_text = translate_text(content, TARGET_LANGUAGE)
     if translated_text:
-        # Send the translated message back to the channel
         await message.channel.send(f"**Translated ({TARGET_LANGUAGE}):** {translated_text}")
     else:
         await message.channel.send("Error: Could not translate the message.")
-    
-    # Process commands (if any)
     await bot.process_commands(message)
 
-# Run the bot
 bot.run(DISCORD_TOKEN)
