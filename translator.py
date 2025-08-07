@@ -1,5 +1,3 @@
-from dotenv import load_dotenv
-load_dotenv()  # Load .env file
 import discord
 from discord.ext import commands
 import requests
@@ -10,10 +8,22 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment variables
+# Load environment variables
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+TARGET_LANGUAGE = os.getenv("TARGET_LANGUAGE", "en")  # Default to English
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID", "0"))  # Replace with your channel ID
 
-TARGET_LANGUAGE = "en"  # Target language code (e.g., 'en' for English, 'zh' for Chinese, 'es' for Spanish)
-SOURCE_CHANNEL_ID = YOUR_CHANNEL_ID  # Replace with your Discord channel ID (integer)
+# Validate environment variables
+if not DISCORD_TOKEN:
+    logger.error("DISCORD_TOKEN is not set. Please configure it in environment variables.")
+    exit(1)
+if not DEEPSEEK_API_KEY:
+    logger.error("DEEPSEEK_API_KEY is not set. Please configure it in environment variables.")
+    exit(1)
+if SOURCE_CHANNEL_ID == 0:
+    logger.error("SOURCE_CHANNEL_ID is not set or invalid. Please configure it in environment variables.")
+    exit(1)
 
 # Set up Discord bot
 intents = discord.Intents.default()
