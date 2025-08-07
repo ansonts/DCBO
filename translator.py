@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID2", "0"))
+SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID1", "0"))
 
 # Validate environment variables
 if not DISCORD_TOKEN:
