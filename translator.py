@@ -3,7 +3,10 @@ from discord.ext import commands
 import requests
 import os
 import logging
+import time
 from dotenv import load_dotenv
+from aiohttp import web
+import asyncio
 
 # Load .env file for local testing
 load_dotenv()
@@ -16,6 +19,7 @@ logger = logging.getLogger(__name__)
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID", "0"))
+PORT = int(os.getenv("PORT", "10000"))  # Default to 10000 if PORT not set
 
 # Validate environment variables
 if not DISCORD_TOKEN:
@@ -49,15 +53,23 @@ def detect_language(text):
             },
             {"role": "user", "content": text}
         ],
-        "temperature": 0.7
+        "temperature": 0.5
     }
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error detecting language: {e}")
-        return None
+    for attempt in range(3):
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            detected_lang = response.json()['choices'][0]['message']['content'].strip()
+            logger.info(f"Detected language for '{text}': {detected_lang}")
+            return detected_lang
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error detecting language (attempt {attempt + 1}): {e}")
+            if attempt < 2:
+                time.sleep(2)
+            else:
+                logger.warning(f"Language detection failed for '{text}'. Falling back to 'en'.")
+                return "en"
+    return "en"
 
 # DeepSeek API function to translate text
 def translate_text(text, target_language):
@@ -77,13 +89,32 @@ def translate_text(text, target_language):
         ],
         "temperature": 0.7
     }
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error translating text: {e}")
-        return None
+    for attempt in range(3):
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json()['choices'][0]['message']['content'].strip()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error translating text (attempt {attempt + 1}): {e}")
+            if attempt < 2:
+                time.sleep(2)
+            else:
+                logger.error(f"Translation failed for '{text}' to {target_language}.")
+                return None
+    return None
+
+# HTTP server to keep Render service alive
+async def handle_health_check(request):
+    return web.Response(text="OK")
+
+async def start_http_server():
+    app = web.Application()
+    app.add_routes([web.get('/', handle_health_check)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"HTTP server started on port {PORT}")
 
 @bot.event
 async def on_ready():
@@ -100,13 +131,12 @@ async def on_message(message):
     # Detect the language of the message
     detected_language = detect_language(content)
     if not detected_language:
-        await message.channel.send(f"Error: Could not detect language for message by {message.author.name}.")
+        await message.channel.send(f"Error: Could not detect language for message by {message.author.display_name}.")
         return
 
     # Determine target language based on detected language
     if detected_language == "en":
         target_language = "ja"
-    
     else:
         target_language = "en"
 
@@ -119,4 +149,12 @@ async def on_message(message):
     
     await bot.process_commands(message)
 
-bot.run(DISCORD_TOKEN)
+# Run bot and HTTP server concurrently
+async def main():
+    await asyncio.gather(
+        bot.start(DISCORD_TOKEN),
+        start_http_server()
+    )
+
+if __name__ == "__main__":
+    asyncio.run(main())
