@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-SOURCE_CHANNEL_ID = int(os.getenv("SOURCE_CHANNEL_ID", "0"))
+JAPANESE_CHANNEL_ID = int(os.getenv("JAPANESE_CHANNEL_ID", "0"))
+ENGLISH_CHANNEL_ID = int(os.getenv("ENGLISH_CHANNEL_ID", "0"))
 PORT = int(os.getenv("PORT", "10000"))  # Default to 10000 if PORT not set
 
 # Validate environment variables
@@ -28,48 +29,17 @@ if not DISCORD_TOKEN:
 if not DEEPSEEK_API_KEY:
     logger.error("DEEPSEEK_API_KEY is not set. Please configure it in environment variables.")
     exit(1)
-if SOURCE_CHANNEL_ID == 0:
-    logger.error("SOURCE_CHANNEL_ID is not set or invalid. Please configure it in environment variables.")
+if JAPANESE_CHANNEL_ID == 0:
+    logger.error("JAPANESE_CHANNEL_ID is not set or invalid. Please configure it in environment variables.")
+    exit(1)
+if ENGLISH_CHANNEL_ID == 0:
+    logger.error("ENGLISH_CHANNEL_ID is not set or invalid. Please configure it in environment variables.")
     exit(1)
 
 # Set up Discord bot
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
-
-# DeepSeek API function to detect language
-def detect_language(text):
-    url = "https://api.deepseek.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a language detection expert. Analyze the following text and return only the ISO 639-1 language code (e.g., 'en' for English, 'ja' for Japanese) with high confidence. Prioritize English ('en') and Japanese ('ja') for short or ambiguous text. If uncertain, return 'en' as a fallback."
-            },
-            {"role": "user", "content": text}
-        ],
-        "temperature": 0.5
-    }
-    for attempt in range(3):
-        try:
-            response = requests.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            detected_lang = response.json()['choices'][0]['message']['content'].strip()
-            logger.info(f"Detected language for '{text}': {detected_lang}")
-            return detected_lang
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error detecting language (attempt {attempt + 1}): {e}")
-            if attempt < 2:
-                time.sleep(2)
-            else:
-                logger.warning(f"Language detection failed for '{text}'. Falling back to 'en'.")
-                return "en"
-    return "en"
 
 # DeepSeek API function to translate text
 def translate_text(text, target_language):
@@ -83,24 +53,37 @@ def translate_text(text, target_language):
         "messages": [
             {
                 "role": "system",
-                "content": f"You are a translator. Translate the following text to {target_language}. Provide only the translated text."
+                "content": f"You are a translation expert. Translate the following text to {target_language} with high accuracy. Provide only the translated text. For short or ambiguous text, prioritize natural translations. If untranslatable, return 'Untranslatable content'."
             },
             {"role": "user", "content": text}
         ],
         "temperature": 0.7
     }
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             response = requests.post(url, json=payload, headers=headers)
             response.raise_for_status()
-            return response.json()['choices'][0]['message']['content'].strip()
+            result = response.json()
+            translated_text = result.get('choices', [{}])[0].get('message', {}).get('content', '').strip()
+            if not translated_text:
+                logger.warning(f"Empty translation for text '{text}' to {target_language}.")
+                return "Untranslatable content"
+            return translated_text
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 429:
+                logger.warning(f"Rate limit hit (attempt {attempt + 1}). Retrying after 5 seconds...")
+                time.sleep(5)
+            else:
+                logger.error(f"HTTP error translating text (attempt {attempt + 1}): {e}")
+                if attempt == 4:
+                    return None
+                time.sleep(2)
         except requests.exceptions.RequestException as e:
             logger.error(f"Error translating text (attempt {attempt + 1}): {e}")
-            if attempt < 2:
-                time.sleep(2)
-            else:
-                logger.error(f"Translation failed for '{text}' to {target_language}.")
+            if attempt == 4:
                 return None
+            time.sleep(2)
+    logger.error(f"Translation failed for '{text}' to {target_language} after 5 attempts.")
     return None
 
 # HTTP server to keep Render service alive
@@ -122,30 +105,44 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    if message.author == bot.user or message.channel.id != SOURCE_CHANNEL_ID:
+    if message.author == bot.user:
         return
     content = message.content
-    if not content:
+    if not content or content.isspace() or all(c in '😀😊👍' for c in content):  # Skip empty or emoji-only messages
+        logger.info(f"Skipping empty or emoji-only message from {message.author.display_name}.")
         return
 
-    # Detect the language of the message
-    detected_language = detect_language(content)
-    if not detected_language:
-        await message.channel.send(f"Error: Could not detect language for message by {message.author.display_name}.")
-        return
-
-    # Determine target language based on detected language
-    if detected_language == "en":
-        target_language = "ja"
-    else:
+    # Check if message is in Japanese or English channel
+    if message.channel.id == JAPANESE_CHANNEL_ID:
+        # Translate Japanese to English and post in English channel
         target_language = "en"
-
-    # Translate the message
-    translated_text = translate_text(content, target_language)
-    if translated_text:
-        await message.channel.send(f"** {message.author.display_name}:** {translated_text}")
-    else:
-        await message.channel.send(f"Error: Could not translate message from {detected_language} by {message.author.display_name} to {target_language}.")
+        translated_text = translate_text(content, target_language)
+        if translated_text:
+            english_channel = bot.get_channel(ENGLISH_CHANNEL_ID)
+            if english_channel:
+                output = f"{message.author.display_name}: {translated_text}"
+                logger.info(f"Sending to English channel: {output}")
+                await english_channel.send(output)
+            else:
+                logger.error(f"English channel ID {ENGLISH_CHANNEL_ID} not found.")
+                await message.channel.send(f"Error: Could not translate message by {message.author.display_name}.")
+        else:
+            await message.channel.send(f"Error: Could not translate message by {message.author.display_name}.")
+    elif message.channel.id == ENGLISH_CHANNEL_ID:
+        # Translate English to Japanese and post in Japanese channel
+        target_language = "ja"
+        translated_text = translate_text(content, target_language)
+        if translated_text:
+            japanese_channel = bot.get_channel(JAPANESE_CHANNEL_ID)
+            if japanese_channel:
+                output = f"{message.author.display_name}: {translated_text}"
+                logger.info(f"Sending to Japanese channel: {output}")
+                await japanese_channel.send(output)
+            else:
+                logger.error(f"Japanese channel ID {JAPANESE_CHANNEL_ID} not found.")
+                await message.channel.send(f"Error: Could not translate message by {message.author.display_name}.")
+        else:
+            await message.channel.send(f"Error: Could not translate message by {message.author.display_name}.")
     
     await bot.process_commands(message)
 
